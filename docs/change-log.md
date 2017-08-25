@@ -18,7 +18,9 @@
 #### Bug fixes
 
 - core: Workaround for [Internet Explorer bug](https://www.tjvantoll.com/2013/08/30/bugs-with-document-activeelement-in-internet-explorer/) when running in an iframe
-
+- core: `addEventListener` and `removeEventListener` are always used to manage event subscriptions, preventing external interference.
+- core: Event listeners allocate less memory, swap at low cost, and are properly diffed now when rendered via `m.mount()`/`m.redraw()`.
+- core: `Object.prototype` properties can no longer interfere with event listener calls.
 
 ### v1.1.6
 
