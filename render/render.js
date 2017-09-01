@@ -589,20 +589,32 @@ module.exports = function($window) {
 	function EventDict() {}
 	EventDict.prototype = Object.create(null)
 	EventDict.prototype.handleEvent = function (ev) {
-		this["on" + ev.type].call(ev.target, ev)
+		var handler0 = this["on" + ev.type]
+		var result
+		if (typeof handler0 === "function") result = handler0.call(ev.target, ev)
+		else if (typeof handler0.handleEvent === "function") handler0.handleEvent(ev)
 		if (typeof onevent === "function") onevent.call(ev.target, ev)
+		if (result === false) {
+			ev.preventDefault()
+			ev.stopPropagation()
+		}
 	}
 
 	//event
 	function updateEvent(vnode, key, value) {
-		if (typeof value === "function") {
-			if (vnode.events == null) vnode.events = new EventDict()
+		if (vnode.events != null) {
 			if (vnode.events[key] === value) return
-			if (vnode.events[key] == null) vnode.dom.addEventListener(key.slice(2), vnode.events, false)
+			if (value != null && (typeof value === "function" || typeof value === "object")) {
+				if (vnode.events[key] == null) vnode.dom.addEventListener(key.slice(2), vnode.events, false)
+				vnode.events[key] = value
+			} else {
+				if (vnode.events[key] != null) vnode.dom.removeEventListener(key.slice(2), vnode.events, false)
+				vnode.events[key] = undefined
+			}
+		} else if (value != null && (typeof value === "function" || typeof value === "object")) {
+			vnode.events = new EventDict()
+			vnode.dom.addEventListener(key.slice(2), vnode.events, false)
 			vnode.events[key] = value
-		} else if (vnode.events != null) {
-			if (vnode.events[key] != null) vnode.dom.removeEventListener(key.slice(2), vnode.events, false)
-			delete vnode.events[key]
 		}
 	}
 
