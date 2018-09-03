@@ -397,6 +397,15 @@ var coreRenderer = function($window) {
 	function getNameSpace(vnode) {
 		return vnode.attrs && vnode.attrs.xmlns || nameSpace[vnode.tag]
 	}
+	// IE9 - IE11 (at least) throw an UnspecifiedError when accessing document.activeElement when
+	// inside an iframe. Catch and swallow this error0, and heavy-handidly return null.
+	function activeElement() {
+		try {
+			return $doc.activeElement
+		} catch (e) {
+			return null
+		}
+	}
 	//create
 	function createNodes(parent, vnodes, start, end, hooks, nextSibling, ns) {
 		for (var i = start; i < end; i++) {
@@ -850,13 +859,13 @@ var coreRenderer = function($window) {
 			if (key2 === "value") {
 				var normalized0 = "" + value // eslint-disable-line no-implicit-coercion
 				//setting input[value] to same value by typing on focused element moves cursor to end in Chrome
-				if ((vnode.tag === "input" || vnode.tag === "textarea") && vnode.dom.value === normalized0 && vnode.dom === $doc.activeElement) return
+				if ((vnode.tag === "input" || vnode.tag === "textarea") && vnode.dom.value === normalized0 && vnode.dom === activeElement()) return
 				//setting select[value] to same value while having select open blinks select dropdown in Chrome
 				if (vnode.tag === "select") {
 					if (value === null) {
-						if (vnode.dom.selectedIndex === -1 && vnode.dom === $doc.activeElement) return
+						if (vnode.dom.selectedIndex === -1 && vnode.dom === activeElement()) return
 					} else {
-						if (old !== null && vnode.dom.value === normalized0 && vnode.dom === $doc.activeElement) return
+						if (old !== null && vnode.dom.value === normalized0 && vnode.dom === activeElement()) return
 					}
 				}
 				//setting option[value] to same value while having select open blinks select dropdown in Chrome
@@ -901,7 +910,7 @@ var coreRenderer = function($window) {
 		}
 	}
 	function isFormAttribute(vnode, attr) {
-		return attr === "value" || attr === "checked" || attr === "selectedIndex" || attr === "selected" && vnode.dom === $doc.activeElement
+		return attr === "value" || attr === "checked" || attr === "selectedIndex" || attr === "selected" && vnode.dom === activeElement()
 	}
 	function isLifecycleMethod(attr) {
 		return attr === "oninit" || attr === "oncreate" || attr === "onupdate" || attr === "onremove" || attr === "onbeforeremove" || attr === "onbeforeupdate"
@@ -932,24 +941,43 @@ var coreRenderer = function($window) {
 			}
 		}
 	}
+	// Here's an explanation of how this works:
+	// 1. The event names are always (by design) prefixed by `on`.
+	// 2. The EventListener interface accepts either a function or an object
+	//    with a `handleEvent` method.
+	// 3. The object does not inherit from `Object.prototype`, to avoid
+	//    any potential interference with that (e.g. setters).
+	// 4. The event name is remapped to the handler0 before calling it.
+	// 5. In function-based event handlers, `ev.target === this`. We replicate
+	//    that below.
+	function EventDict() {}
+	EventDict.prototype = Object.create(null)
+	EventDict.prototype.handleEvent = function (ev) {
+		var handler0 = this["on" + ev.type]
+		var result
+		if (typeof handler0 === "function") result = handler0.call(ev.target, ev)
+		else if (typeof handler0.handleEvent === "function") handler0.handleEvent(ev)
+		if (typeof onevent === "function") onevent.call(ev.target, ev)
+		if (result === false) {
+			ev.preventDefault()
+			ev.stopPropagation()
+		}
+	}
 	//event
 	function updateEvent(vnode, key2, value) {
-		var element = vnode.dom
-		var callback = typeof onevent !== "function" ? value : function(e) {
-			var result = value.call(element, e)
-			onevent.call(element, e)
-			return result
-		}
-		if (key2 in element) element[key2] = typeof value === "function" ? callback : null
-		else {
-			var eventName = key2.slice(2)
-			if (vnode.events === undefined) vnode.events = {}
-			if (vnode.events[key2] === callback) return
-			if (vnode.events[key2] != null) element.removeEventListener(eventName, vnode.events[key2], false)
-			if (typeof value === "function") {
-				vnode.events[key2] = callback
-				element.addEventListener(eventName, vnode.events[key2], false)
+		if (vnode.events != null) {
+			if (vnode.events[key2] === value) return
+			if (value != null && (typeof value === "function" || typeof value === "object")) {
+				if (vnode.events[key2] == null) vnode.dom.addEventListener(key2.slice(2), vnode.events, false)
+				vnode.events[key2] = value
+			} else {
+				if (vnode.events[key2] != null) vnode.dom.removeEventListener(key2.slice(2), vnode.events, false)
+				vnode.events[key2] = undefined
 			}
+		} else if (value != null && (typeof value === "function" || typeof value === "object")) {
+			vnode.events = new EventDict()
+			vnode.dom.addEventListener(key2.slice(2), vnode.events, false)
+			vnode.events[key2] = value
 		}
 	}
 	//lifecycle
@@ -975,7 +1003,7 @@ var coreRenderer = function($window) {
 	function render(dom, vnodes) {
 		if (!dom) throw new Error("Ensure the DOM element being passed to m.route/m.mount/m.render is not undefined.")
 		var hooks = []
-		var active = $doc.activeElement
+		var active = activeElement()
 		var namespace = dom.namespaceURI
 		// First time0 rendering into a node clears it out
 		if (dom.vnodes == null) dom.textContent = ""
@@ -983,7 +1011,7 @@ var coreRenderer = function($window) {
 		updateNodes(dom, dom.vnodes, Vnode.normalizeChildren(vnodes), false, hooks, null, namespace === "http://www.w3.org/1999/xhtml" ? undefined : namespace)
 		dom.vnodes = vnodes
 		// document.activeElement can return null in IE https://developer.mozilla.org/en-US/docs/Web/API/Document/activeElement
-		if (active != null && $doc.activeElement !== active) active.focus()
+		if (active != null && activeElement() !== active) active.focus()
 		for (var i = 0; i < hooks.length; i++) hooks[i]()
 	}
 	return {render: render, setEventCallback: setEventCallback}
@@ -1090,12 +1118,12 @@ var coreRouter = function($window) {
 		return data
 	}
 	var asyncId
-	function debounceAsync(callback0) {
+	function debounceAsync(callback) {
 		return function() {
 			if (asyncId != null) return
 			asyncId = callAsync0(function() {
 				asyncId = null
-				callback0()
+				callback()
 			})
 		}
 	}
@@ -1238,9 +1266,9 @@ var _20 = function($window, redrawService0) {
 	return route
 }
 m.route = _20(window, redrawService)
-m.withAttr = function(attrName, callback1, context) {
+m.withAttr = function(attrName, callback, context) {
 	return function(e) {
-		callback1.call(context || this, attrName in e.currentTarget ? e.currentTarget[attrName] : e.currentTarget.getAttribute(attrName))
+		callback.call(context || this, attrName in e.currentTarget ? e.currentTarget[attrName] : e.currentTarget.getAttribute(attrName))
 	}
 }
 var _28 = coreRenderer(window)
